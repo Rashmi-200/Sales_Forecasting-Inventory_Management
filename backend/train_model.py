@@ -1,5 +1,6 @@
 # ============================================================
 #   WALMART PRICE FORECASTING - MODEL TRAINING (ALL METRICS)
+#   Python 3.13 + sklearn compatible
 # ============================================================
 
 import pandas as pd
@@ -24,7 +25,7 @@ from xgboost import XGBRegressor
 # ------------------------------------------------------------
 # 1. LOAD DATA
 # ------------------------------------------------------------
-DATA_PATH = r"C:\Users\USER\Desktop\Sales_Forecasting-Inventory_Management\data\Walmart_preprocessed_completed_PurchaseDate_2019_2024.csv"
+DATA_PATH = r"C:\Users\Vibhu\Desktop\Sales_Forecasting-Inventory_Management\data\Walmart_preprocessed_completed_PurchaseDate_2019_2024.csv"
 df = pd.read_csv(DATA_PATH)
 
 print("Dataset Loaded:", df.shape)
@@ -48,6 +49,7 @@ for col in df.columns:
 # 3. DATE FEATURE ENGINEERING
 # ------------------------------------------------------------
 df['Purchase_Date'] = pd.to_datetime(df['Purchase_Date'], errors='coerce')
+
 df['Year'] = df['Purchase_Date'].dt.year
 df['Month'] = df['Purchase_Date'].dt.month
 df['Week'] = df['Purchase_Date'].dt.isocalendar().week.astype(float)
@@ -87,7 +89,10 @@ X = pd.DataFrame(imputer.fit_transform(X), columns=FEATURES)
 # 7. TRAIN–TEST SPLIT (TIME AWARE)
 # ------------------------------------------------------------
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, shuffle=False
+    X,
+    y,
+    test_size=0.2,
+    shuffle=False
 )
 
 # ------------------------------------------------------------
@@ -95,6 +100,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 # ------------------------------------------------------------
 models = {
     "LinearRegression": (LinearRegression(), {}),
+
     "RandomForest": (
         RandomForestRegressor(random_state=42),
         {
@@ -102,6 +108,7 @@ models = {
             "max_depth": [10, 20]
         }
     ),
+
     "GradientBoosting": (
         GradientBoostingRegressor(random_state=42),
         {
@@ -109,8 +116,13 @@ models = {
             "learning_rate": [0.05, 0.1]
         }
     ),
+
     "XGBoost": (
-        XGBRegressor(objective="reg:squarederror", random_state=42),
+        XGBRegressor(
+            objective="reg:squarederror",
+            random_state=42,
+            n_jobs=-1
+        ),
         {
             "n_estimators": [100, 200],
             "learning_rate": [0.05, 0.1],
@@ -124,7 +136,6 @@ models = {
 # ------------------------------------------------------------
 best_model = None
 best_rmse = float("inf")
-
 results = []
 
 for name, (model, params) in models.items():
@@ -146,9 +157,16 @@ for name, (model, params) in models.items():
 
     preds = trained_model.predict(X_test)
 
-    rmse = mean_squared_error(y_test, preds, squared=False)
+    # ---------------- METRICS ----------------
+    mse = mean_squared_error(y_test, preds)
+    rmse = np.sqrt(mse)  # ✅ sklearn-safe RMSE
     mae = mean_absolute_error(y_test, preds)
-    mape = np.mean(np.abs((y_test - preds) / y_test)) * 100
+
+    # Safe MAPE (avoids divide-by-zero)
+    mape = np.mean(
+        np.abs((y_test - preds) / np.clip(y_test, 1e-8, None))
+    ) * 100
+
     r2 = r2_score(y_test, preds)
 
     print(
@@ -161,7 +179,7 @@ for name, (model, params) in models.items():
 
     results.append([name, rmse, mae, mape, r2])
 
-    # ✅ Model selection by RMSE
+    # Best model selection by RMSE
     if rmse < best_rmse:
         best_rmse = rmse
         best_model = trained_model
@@ -176,6 +194,7 @@ results_df = pd.DataFrame(
     results,
     columns=["Model", "RMSE", "MAE", "MAPE (%)", "R2"]
 )
+
 results_df.to_csv("model_comparison_metrics.csv", index=False)
 
 print("\n===================================")

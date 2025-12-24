@@ -21,208 +21,166 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 
 # ===============================
-# 1. Load Dataset
+# Helper: train and save model (only when needed)
 # ===============================
-DATA_PATH = r"C:\Users\Vibhu\Desktop\Sales_Forecasting-Inventory_Management\data\Walmart_preprocessed_completed_PurchaseDate_2019_2024.csv"
-df = pd.read_csv(DATA_PATH)
+def train_and_save():
+    DATA_PATH = r"C:\Users\Vibhu\Desktop\Sales_Forecasting-Inventory_Management\data\Walmart_preprocessed_completed_PurchaseDate_2019_2024.csv"
+    df = pd.read_csv(DATA_PATH)
+
+    def age_to_group(age):
+        try:
+            age = float(age)
+        except Exception:
+            return 4
+        if age <= 25:
+            return 0
+        elif age <= 35:
+            return 1
+        elif age <= 45:
+            return 2
+        elif age <= 60:
+            return 3
+        else:
+            return 4
+
+    df["Age_Group"] = df["Age"].apply(age_to_group)
+
+    FEATURES = [
+        "Product_Name",
+        "Brand",
+        "Category",
+        "Market_Price",
+        "Discount_Applied",
+        "Rating",
+        "Market_Share",
+        "Promotion_Competitor"
+    ]
+
+    TARGETS = ["Age_Group", "Gender"]
+
+    X = df[FEATURES].copy()
+    y = df[TARGETS].copy()
+
+    # Encode categorical features
+    label_encoders = {}
+    most_common_values = {}
+    for col in ["Product_Name", "Brand", "Category"]:
+        le = LabelEncoder()
+        X[col] = le.fit_transform(X[col].astype(str))
+        label_encoders[col] = le
+        most_common_values[col] = le.classes_[0] if len(le.classes_)>0 else ''
+
+    # Fix Yes/No
+    for col in ["Promotion_Competitor", "Discount_Applied"]:
+        if col in X.columns:
+            X[col] = (
+                X[col]
+                .astype(str)
+                .str.lower()
+                .map({"yes": 1, "no": 0})
+                .fillna(0)
+            )
+
+    X = X.apply(pd.to_numeric, errors="coerce").fillna(0)
+
+    gender_le = LabelEncoder()
+    y["Gender"] = gender_le.fit_transform(y["Gender"].astype(str))
+    label_encoders["Gender"] = gender_le
+
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    models = {
+        "LogisticRegression": LogisticRegression(max_iter=1000),
+        "RandomForest": RandomForestClassifier(n_estimators=200, max_depth=20, random_state=42)
+    }
+
+    best_model = None
+    best_score = -1
+    for name, model in models.items():
+        pipeline = Pipeline([("scaler", StandardScaler()), ("model", MultiOutputClassifier(model))])
+        pipeline.fit(X_train, y_train)
+        preds = pipeline.predict(X_test)
+        age_acc = accuracy_score(y_test["Age_Group"], preds[:, 0])
+        gender_acc = accuracy_score(y_test["Gender"], preds[:, 1])
+        avg_score = (age_acc + gender_acc) / 2
+        if avg_score > best_score:
+            best_score = avg_score
+            best_model = pipeline
+
+    # Save artifacts
+    joblib.dump(best_model, os.path.join(MODEL_DIR, 'best_model.pkl'))
+    joblib.dump(label_encoders, os.path.join(MODEL_DIR, 'label_encoders.pkl'))
+    joblib.dump(most_common_values, os.path.join(MODEL_DIR, 'fallback_values.pkl'))
+
+    return best_model, label_encoders, most_common_values
 
 
-# ===============================
-# 2. Age Segmentation
-# ===============================
-def age_to_group(age):
-    if age <= 25:
-        return 0
-    elif age <= 35:
-        return 1
-    elif age <= 45:
-        return 2
-    elif age <= 60:
-        return 3
-    else:
-        return 4
-
-df["Age_Group"] = df["Age"].apply(age_to_group)
-
-
-# ===============================
-# 3. Features & Targets
-# ===============================
-FEATURES = [
-    "Product_Name",
-    "Brand",
-    "Category",
-    "Market_Price",
-    "Discount_Applied",
-    "Rating",
-    "Market_Share",
-    "Promotion_Competitor"
-]
-
-TARGETS = ["Age_Group", "Gender"]
-
-X = df[FEATURES].copy()
-y = df[TARGETS].copy()
-
-
-# ===============================
-# 4. Encode Categorical Features
-# ===============================
-label_encoders = {}
-most_common_values = {}
-
-for col in ["Product_Name", "Brand", "Category"]:
-    le = LabelEncoder()
-    X[col] = le.fit_transform(X[col].astype(str))
-    label_encoders[col] = le
-    most_common_values[col] = le.classes_[0]  # fallback value
-
-
-# ===============================
-# 5. Fix Yes / No Columns
-# ===============================
-for col in ["Promotion_Competitor", "Discount_Applied"]:
-    X[col] = (
-        X[col]
-        .astype(str)
-        .str.lower()
-        .map({"yes": 1, "no": 0})
-        .fillna(0)
-        .astype(int)
-    )
-
-
-# ===============================
-# 6. Numeric Safety
-# ===============================
-X = X.apply(pd.to_numeric, errors="coerce").fillna(0)
-
-
-# ===============================
-# 7. Encode Target (Gender)
-# ===============================
-gender_le = LabelEncoder()
-y["Gender"] = gender_le.fit_transform(y["Gender"].astype(str))
-label_encoders["Gender"] = gender_le
-
-
-# ===============================
-# 8. Train-Test Split
-# ===============================
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
-    test_size=0.2,
-    random_state=42
-)
-
-
-# ===============================
-# 9. Models
-# ===============================
-models = {
-    "LogisticRegression": LogisticRegression(max_iter=1000),
-    "RandomForest": RandomForestClassifier(
-        n_estimators=200,
-        max_depth=20,
-        random_state=42
-    )
-}
-
-
-# ===============================
-# 10. Training
-# ===============================
-best_model = None
-best_score = 0
-
-for name, model in models.items():
-    print(f"\n🚀 Training {name}")
-
-    pipeline = Pipeline([
-        ("scaler", StandardScaler()),
-        ("model", MultiOutputClassifier(model))
-    ])
-
-    pipeline.fit(X_train, y_train)
-
-    preds = pipeline.predict(X_test)
-
-    age_acc = accuracy_score(y_test["Age_Group"], preds[:, 0])
-    gender_acc = accuracy_score(y_test["Gender"], preds[:, 1])
-
-    print(f"Age Accuracy    : {age_acc:.3f}")
-    print(f"Gender Accuracy : {gender_acc:.3f}")
-
-    avg_score = (age_acc + gender_acc) / 2
-
-    if avg_score > best_score:
-        best_score = avg_score
-        best_model = pipeline
-
-
-# ===============================
-# 11. Save Model
-# ===============================
-joblib.dump(best_model, f"{MODEL_DIR}/best_model.pkl")
-joblib.dump(label_encoders, f"{MODEL_DIR}/label_encoders.pkl")
-joblib.dump(most_common_values, f"{MODEL_DIR}/fallback_values.pkl")
-
-print("\n✅ Model & encoders saved successfully!")
-
-
-# ===============================
-# 12. Safe Encoder Function
-# ===============================
 def safe_encode(value, encoder, fallback):
-    if value in encoder.classes_:
-        return encoder.transform([value])[0]
-    return encoder.transform([fallback])[0]
+    try:
+        if value in encoder.classes_:
+            return int(encoder.transform([value])[0])
+    except Exception:
+        pass
+    # if fallback not in classes, return 0
+    try:
+        return int(encoder.transform([fallback])[0])
+    except Exception:
+        return 0
 
 
-# ===============================
-# 13. Prediction Function
-# ===============================
 def predict_customer_segment(product_name, brand, category):
-    model = joblib.load(f"{MODEL_DIR}/best_model.pkl")
-    encoders = joblib.load(f"{MODEL_DIR}/label_encoders.pkl")
-    fallback = joblib.load(f"{MODEL_DIR}/fallback_values.pkl")
+    # Load saved model and encoders if present; else train
+    model_path = os.path.join(MODEL_DIR, 'best_model.pkl')
+    enc_path = os.path.join(MODEL_DIR, 'label_encoders.pkl')
+    fallback_path = os.path.join(MODEL_DIR, 'fallback_values.pkl')
+
+    if not (os.path.exists(model_path) and os.path.exists(enc_path) and os.path.exists(fallback_path)):
+        train_and_save()
+
+    model = joblib.load(model_path)
+    encoders = joblib.load(enc_path)
+    fallback = joblib.load(fallback_path)
+
+    # Build input vector similar to training
+    # Use average numeric stats by reloading dataset minimal fields
+    DATA_PATH = r"C:\Users\Vibhu\Desktop\Sales_Forecasting-Inventory_Management\data\Walmart_preprocessed_completed_PurchaseDate_2019_2024.csv"
+    df = pd.read_csv(DATA_PATH)
+    FEATURES = [
+        "Product_Name",
+        "Brand",
+        "Category",
+        "Market_Price",
+        "Discount_Applied",
+        "Rating",
+        "Market_Share",
+        "Promotion_Competitor"
+    ]
 
     input_df = pd.DataFrame([{
-        "Product_Name": safe_encode(product_name, encoders["Product_Name"], fallback["Product_Name"]),
-        "Brand": safe_encode(brand, encoders["Brand"], fallback["Brand"]),
-        "Category": safe_encode(category, encoders["Category"], fallback["Category"]),
-        "Market_Price": X["Market_Price"].mean(),
+        "Product_Name": safe_encode(product_name, encoders["Product_Name"], fallback.get("Product_Name", '')),
+        "Brand": safe_encode(brand, encoders["Brand"], fallback.get("Brand", '')),
+        "Category": safe_encode(category, encoders["Category"], fallback.get("Category", '')),
+        "Market_Price": float(df["Market_Price"].mean()) if "Market_Price" in df.columns else 0,
         "Discount_Applied": 0,
-        "Rating": X["Rating"].mean(),
-        "Market_Share": X["Market_Share"].mean(),
+        "Rating": float(df["Rating"].mean()) if "Rating" in df.columns else 0,
+        "Market_Share": float(df["Market_Share"].mean()) if "Market_Share" in df.columns else 0,
         "Promotion_Competitor": 0
     }])
 
     pred = model.predict(input_df)
 
-    age_map = {
-        0: "18–25",
-        1: "26–35",
-        2: "36–45",
-        3: "46–60",
-        4: "60+"
-    }
+    age_map = {0: "18–25", 1: "26–35", 2: "36–45", 3: "46–60", 4: "60+"}
+    age_label = age_map.get(int(pred[0][0]), "36–45")
 
-    return {
-        "Age_Group": age_map[pred[0][0]],
-        "Gender": encoders["Gender"].inverse_transform([pred[0][1]])[0]
-    }
+    try:
+        gender_label = encoders["Gender"].inverse_transform([int(pred[0][1])])[0]
+    except Exception:
+        gender_label = str(pred[0][1])
+
+    return {"Age_Group": age_label, "Gender": gender_label}
 
 
-# ===============================
-# 14. Local Test
-# ===============================
 if __name__ == "__main__":
     print("\n🎯 Sample Prediction:")
-    print(
-        predict_customer_segment(
-            product_name="Smartwatch",
-            brand="Sony",
-            category="Electronics"
-        )
-    )
+    print(predict_customer_segment(product_name="Smartwatch", brand="Sony", category="Electronics"))

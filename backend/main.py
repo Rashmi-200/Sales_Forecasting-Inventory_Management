@@ -2,7 +2,9 @@
 #   WALMART MULTI-AGENT INTELLIGENCE SYSTEM (FASTAPI)
 # =========================================================
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+import re
 from pydantic import BaseModel
 import pandas as pd
 import joblib
@@ -12,6 +14,7 @@ from sklearn.impute import SimpleImputer
 from dotenv import load_dotenv
 import os
 import requests
+from typing import Optional, Dict
 
 # ---------------------------------------------------------
 # Load environment variables
@@ -22,7 +25,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # ---------------------------------------------------------
 # Load dataset and model
 # ---------------------------------------------------------
-DATA_PATH = r"C:\Users\USER\Desktop\Sales_Forecasting-Inventory_Management\data\Walmart_preprocessed_complete.csv"
+DATA_PATH = r"C:\Users\Vibhu\Desktop\Sales_Forecasting-Inventory_Management\data\Walmart_preprocessed_completed_PurchaseDate_2019_2024.csv"
 df = pd.read_csv(DATA_PATH)
 
 model = joblib.load("best_price_forecast_model.pkl")
@@ -264,13 +267,127 @@ def analyze(req: AnalyzeRequest):
         # 5. Instant important advice based on top 5 future products
         important = important_advice(top_products_future, req.future_start, req.future_end)
         
-        return {
+        # Build forecast part
+        forecast_resp = {
             "future_total_cost_prediction": future_total_cost,
             "historical_top_products": top_products_historical.to_dict(orient="records"),
             "predicted_top_products": top_products_future.to_dict(orient="records"),
             "ai_generated_advice": ai_advice,
             "important_advice": important
         }
+
+        # Try to build a campaign plan for the top historical product (best-effort)
+        campaign_resp = {"plan": {}, "csv_path": "N/A", "json_path": "N/A"}
+        try:
+            best_product = top_products_historical.iloc[0] if not top_products_historical.empty else None
+            if best_product is not None:
+                best_product_name = best_product["Product_Name"]
+
+                # Try to locate reasonable brand/category columns in the dataset
+                brand_col = next((c for c in ["Brand", "brand", "Brand_Name", "Manufacturer"] if c in df.columns), None)
+                category_col = next((c for c in ["Category", "category", "Product_Category", "Category_Name"] if c in df.columns), None)
+
+                if brand_col and category_col:
+                    # Find the most common brand/category for the product
+                    product_rows = df[df["Product_Name_Original"] == best_product_name]
+                    if not product_rows.empty:
+                        brand_val = str(product_rows[brand_col].mode().iloc[0]) if brand_col in product_rows.columns else ""
+                        category_val = str(product_rows[category_col].mode().iloc[0]) if category_col in product_rows.columns else ""
+
+                        # Lazy import planner and produce plan + save reports
+                        from backend.plan_campaign import plan_for_input, write_report_csv
+
+                        plan_output = plan_for_input(best_product_name, brand_val, category_val, impressions_by_platform=None)
+                        csv_path, json_path = write_report_csv(plan_output, cpms_override=None, impressions_override=None, out_dir=os.path.dirname(__file__))
+
+                        # Return only the filename (basename) to the client
+                        csv_name = os.path.basename(csv_path) if isinstance(csv_path, str) else csv_path
+                        json_name = os.path.basename(json_path) if isinstance(json_path, str) else json_path
+                        campaign_resp = {"plan": plan_output, "csv_path": csv_name, "json_path": json_name}
+                else:
+                    # No brand/category columns found -- leave campaign_resp as N/A
+                    campaign_resp = {"plan": {}, "csv_path": "N/A", "json_path": "N/A"}
+        except Exception as e:
+            # If any error occurs, include minimal error info but don't break the main response
+            campaign_resp = {"plan": {}, "csv_path": "N/A", "json_path": "N/A", "error": str(e)}
+
+        # Return forecast fields at top-level for backward compatibility,
+        # and keep the `forecast` and `campaign` sections for the new UI.
+        combined = {**forecast_resp, "forecast": forecast_resp, "campaign": campaign_resp}
+        return combined
         
     except Exception as e:
         return {"error": str(e)}
+
+
+# ---------------------------------------------------------
+# Campaign planning endpoint (uses customer segmentation)
+# ---------------------------------------------------------
+class CampaignRequest(BaseModel):
+    product_name: str
+    brand: str
+    category: str
+    impressions: Optional[Dict[str, int]] = None
+    cpms: Optional[Dict[str, float]] = None
+
+
+@app.post('/campaign')
+def campaign_planner(req: CampaignRequest):
+    try:
+        # import planner lazily
+        from backend.plan_campaign import plan_for_input, write_report_csv
+
+        output = plan_for_input(req.product_name, req.brand, req.category, impressions_by_platform=req.impressions)
+        csv_path, json_path = write_report_csv(output, cpms_override=req.cpms, impressions_override=req.impressions, out_dir=os.path.dirname(__file__))
+
+        # Return filenames (basename) rather than full filesystem paths
+        csv_name = os.path.basename(csv_path) if isinstance(csv_path, str) else csv_path
+        json_name = os.path.basename(json_path) if isinstance(json_path, str) else json_path
+
+        return {
+            'output': output,
+            'csv_path': csv_name,
+            'json_path': json_name
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
+
+@app.get('/reports/{filename}')
+def get_report(filename: str):
+    """Serve campaign report files saved in the backend directory.
+    Only allows files with the pattern `campaign_report_YYYYMMDD_HHMMSS.(csv|json)`.
+    """
+    safe_dir = os.path.dirname(__file__)
+
+    # Validate filename pattern to avoid path traversal
+    if not re.match(r'^campaign_report_\d{8}_\d{6}\.(csv|json)$', filename):
+        raise HTTPException(status_code=400, detail='Invalid filename')
+
+    file_path = os.path.abspath(os.path.join(safe_dir, filename))
+    if not file_path.startswith(os.path.abspath(safe_dir) + os.sep):
+        raise HTTPException(status_code=400, detail='Invalid path')
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail='File not found')
+
+    return FileResponse(path=file_path, media_type='application/octet-stream', filename=filename)
+
+
+@app.get('/assets/ai_robo.webp')
+def get_ai_robo():
+    """Serve the AI robo image from the project's `data` folder.
+    This allows the frontend to reference `/assets/ai_robo.webp` without copying images.
+    """
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+    # original filename contains a space; normalize to the expected name
+    candidates = [
+        os.path.join(data_dir, 'AI robo.webp'),
+        os.path.join(data_dir, 'AI_robo.webp'),
+        os.path.join(data_dir, 'ai_robo.webp')
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return FileResponse(path=os.path.abspath(p), media_type='image/webp', filename=os.path.basename(p))
+
+    raise HTTPException(status_code=404, detail='AI robo image not found')
