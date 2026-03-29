@@ -1,0 +1,38 @@
+{
+  "predicted_segment": {
+    "Age_Group": "26\u201335",
+    "Gender": "Male"
+  },
+  "recommended_platforms_ranked": [
+    "Instagram",
+    "Twitter",
+    "Facebook",
+    "YouTube",
+    "TikTok",
+    "LinkedIn",
+    "Pinterest",
+    "Reddit"
+  ],
+  "estimated_costs_usd": {
+    "Instagram": 60.0,
+    "Twitter": 60.0,
+    "Facebook": 70.0,
+    "YouTube": 90.0,
+    "TikTok": 50.0,
+    "LinkedIn": 120.0,
+    "Pinterest": 50.0,
+    "Reddit": 40.0
+  },
+  "total_estimated_cost_usd": 540.0,
+  "advice": [
+    "Target messaging: emphasize product benefits for 26\u201335 age group and Male customers.",
+    "Creative: use short demo videos and user testimonials for wearables like smartwatches.",
+    "Timing: schedule posts during evenings and weekends to maximize engagement for working adults.",
+    "CTA: highlight trial, limited-time discount, and easy returns to reduce purchase friction.",
+    "Audiences: use lookalike audiences on Facebook/Instagram and interest-based targeting on YouTube.",
+    "Instagram: Focus on Reels + influencer partnerships for visual product demos.",
+    "Twitter: Use targeted creative and measure performance quickly.",
+    "Facebook: Use carousel ads + dynamic product ads; strong for 35-59 age segment.",
+    "YouTube: Create 15\u201330s pre-roll demo videos plus product review collaborations."
+  ]
+}
